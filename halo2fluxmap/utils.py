@@ -9,6 +9,8 @@ from   scipy.integrate    import *
 from   scipy.interpolate  import *
 from   cosmolopy          import *
 
+from   numpy.random       import *
+
 def r2m(r):
     rho = 2.78e11 * params.omegam * (params.h**2)
     return 4./3.*np.pi*rho*r**3
@@ -31,11 +33,11 @@ def mz2c(m,z):
     return 7.85 * (m / (2e+12/params.h))**-0.081 / (1+z)**0.71
                
 def r2z(r):
-	zrange   = np.linspace(0,6,1000)
-	r_to_z   = sp.interpolate.interp1d(
-		cd.comoving_distance_transverse(
-			zrange, **params.cosmo), zrange)
-	return r_to_z(r).astype('float32')
+    zrange   = np.linspace(0,6,1000)
+    r_to_z   = sp.interpolate.interp1d(
+        cd.comoving_distance_transverse(
+            zrange, **params.cosmo), zrange)
+    return r_to_z(r).astype('float32')
 
 def report(description,verbosity):
     if(params.rank==0 and params.verbose>=verbosity): 
@@ -61,7 +63,6 @@ def check_memory(description,N):
 
 def distribute_catalog(data):
 
-#    report('Distributing...',2)
 
     N = np.shape(data)[0]
 
@@ -91,22 +92,35 @@ def cull_catalog(data):
     
     r = np.sqrt(data[:,0]**2+data[:,1]**2+data[:,2]**2)
     redshift = r2z(r)
-    
+
+    # scamble angular positions over full sky if params.scramble = True
+    if params.scramble:
+        n  = len(r)
+
+        mu  = uniform(-1.0, 1.0,     n)
+        phi = uniform( 0.0, 2*np.pi, n)
+
+        rcyl = r * np.sqrt(1-mu**2)
+
+        data[:,0] = rcyl * np.cos(phi)
+        data[:,1] = rcyl * np.sin(phi)
+        data[:,2] =    r * mu
+
     # filtering halos in the sphere of r<box/2 and z<max_redshift
-    dm = ([
+    dm = (
             (redshift  > params.min_redshift ) & 
             (redshift  < params.max_redshift ) & 
             (  abs(r)  < (params.box_size)/2 ) & 
             (data[:,3] > params.min_mass     )
-            ])    
+            )    
 
     data = data[dm]    
 
     if params.flat == 1:
         thetaxc = np.abs(np.arctan(data[:,1]/data[:,0]))*2
         thetayc = np.abs(np.arctan(data[:,2]/data[:,0]))*2	
-        dm = [(thetaxc < np.radians(params.fov)) & (thetayc < np.radians(params.fov))
-              & (data[:,0]>0)]
+        dm = ((thetaxc < np.radians(params.fov)) & (thetayc < np.radians(params.fov))
+              & (data[:,0]>0))
         data = data[dm]
     else:        
         xcmin=-1e10; xcmax=1e10; ycmin=-1e10; ycmax=1e10; zcmin=-1e10; zcmax=1e10;
@@ -119,24 +133,24 @@ def cull_catalog(data):
         if params.octy == 1: ycmin=0; ycmax=1e10
         if params.octz == 1: zcmin=0; zcmax=1e10
 
-        dm = [ (data[:,0] > xcmin) & (data[:,0] < xcmax) & 
+        dm = ( (data[:,0] > xcmin) & (data[:,0] < xcmax) & 
                (data[:,1] > ycmin) & (data[:,1] < ycmax) & 
-               (data[:,2] > zcmin) & (data[:,2] < zcmax) ] 
+               (data[:,2] > zcmin) & (data[:,2] < zcmax) )
         data = data[dm]
 
     return data
 
-def jiang_shmf(m,M_halo):	
+def jiang_shmf(m,M_halo):
     gamma_1    = 0.13
     alpha_1    = -0.83
     gamma_2    = 1.33
     alpha_2    = -0.02
     beta_2     = 5.67
-    zeta       = 1.19 	
+    zeta       = 1.19
     
     dndm = (((gamma_1*((m/M_halo)**alpha_1))+
              (gamma_2*((m/M_halo)**alpha_2)))*
-            (np.exp(-(beta_2)*((m/M_halo)**zeta))))
+             (np.exp(-(beta_2)*((m/M_halo)**zeta))))
     
     return dndm
 
